@@ -820,6 +820,53 @@ def get_learning_rate(params, global_step, num_examples_per_epoch, model,
   return learning_rate
 
 
+from tensorflow.python.framework import ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.training import optimizer
+from tensorflow.python.training import training_ops
+from tensorflow.python.util.tf_export import tf_export
+
+
+class LarsOptimizer(optimizer.Optimizer):
+
+  def __init__(self, learning_rate=1.0, nu=0.001, beta=0.0001, momentum=0.9,
+               use_locking=False, name="LARS"):
+    super(LarsOptimizer, self).__init__(use_locking, name)
+    self._learning_rate = learning_rate
+    self._nu = nu
+    self._beta = beta
+    self._momentum = momentum
+
+  def _create_slots(self, var_list):
+    for v in var_list:
+      self._zeros_slot(v, "momentum", self._name)
+
+  def _prepare(self):
+    learning_rate = self._learning_rate
+    self._learning_rate_tensor = ops.convert_to_tensor(learning_rate, name="learning_rate")
+
+    momentum = self._momentum
+    self._momentum_tensor = ops.convert_to_tensor(momentum, name="momentum")
+
+    nu = self._nu
+    self._nu_tensor = ops.convert_to_tensor(nu, name="momentum")
+
+    beta = self._beta
+    self._beta_tensor = ops.convert_to_tensor(beta, name="momentum")
+
+  def _apply_dense(self, grad, var):
+    local_lr = self._nu_tensor * (tf.norm(var) / (tf.norm(grad) + self._beta_tensor * tf.norm(var)))
+
+    gradients_lars = (self._momentum_tensor * self.get_slot(var, "momentum") +
+                      self._learning_rate_tensor * local_lr * (grad + self._beta_tensor * var))
+
+    update_memory_op = self.get_slot(var, "momentum").assign(grad)
+    update_params_op = var.assign(var - grad)
+
+    return tf.group(update_memory_op, update_params_op)
+
+
+
 def get_optimizer(params, learning_rate):
   """Returns the optimizer that should be used based on params."""
   if params.optimizer == 'momentum':
@@ -833,6 +880,8 @@ def get_optimizer(params, learning_rate):
         params.rmsprop_decay,
         momentum=params.rmsprop_momentum,
         epsilon=params.rmsprop_epsilon)
+  elif params.optimizer == 'lars':
+      opt = LarsOptimizer(learning_rate)
   else:
     raise ValueError('Optimizer "%s" was not recognized',
                      params.optimizer)
